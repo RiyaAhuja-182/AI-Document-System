@@ -13,8 +13,6 @@
 
 > 🚀 **Production-ready** • 🔍 **Semantic search with vector embeddings** • 💬 **Natural language Q&A** • 📄 **Multi-format support** • 🎨 **Beautiful modern UI** • 🔐 **Enterprise security**
 
-[![Join our Discord](https://img.shields.io/badge/Discord-Join%20Community-7289DA?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/ubWcC2PS)
-
 [Features](#features) •
 [Quick Start](#quick-start) •
 [Documentation](#documentation) •
@@ -1669,79 +1667,6 @@ docker exec -it document-chat-system npm run db:seed
 
 ---
 
-
----
-
-## Contributing
-
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
-
-### Quick Start for Contributors
-
-```bash
-# Fork the repository
-# Clone your fork
-git clone https://github.com/YOUR_USERNAME/document-chat-system.git
-
-# Create a feature branch
-git checkout -b feature/amazing-feature
-
-# Make your changes
-# ...
-
-# Run tests and linting
-npm run lint
-npm run type-check
-npm test
-
-# Commit with conventional commits
-git commit -m "feat: add amazing feature"
-
-# Push to your fork
-git push origin feature/amazing-feature
-
-# Open a Pull Request
-```
-
-### Development Guidelines
-
-- Write tests for new features
-- Follow existing code style
-- Update documentation
-- Use conventional commits
-- Keep PRs focused and small
-
----
-
-## Community
-
-Join our growing community of developers and users!
-
-[![Discord](https://img.shields.io/badge/Discord-Join%20Chat-7289DA?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/ubWcC2PS)
-
-- 💬 **Discord**: Get help, share ideas, and connect with other users
-- 🐛 **GitHub Issues**: Report bugs and request features
-- 🌟 **GitHub Discussions**: Ask questions and share your projects
-
-We're building something great together. Your feedback and contributions make this project better for everyone!
-
----
-
-## License
-
-This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
-
-### What this means:
-
-✅ Commercial use allowed
-✅ Modification allowed
-✅ Distribution allowed
-✅ Private use allowed
-❌ No liability
-❌ No warranty
-
----
-
 ## Acknowledgments
 
 Built with amazing open-source technologies:
@@ -1758,9 +1683,4 @@ Built with amazing open-source technologies:
 
 ---
 
-<div align="center">
-
-Made with ❤️ by the open source community
-
-</div>
 
