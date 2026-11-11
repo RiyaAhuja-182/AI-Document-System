@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma';
 import { AIServiceManager } from '@/lib/ai/ai-service-manager';
 import { UsageTrackingService } from '@/lib/usage-tracking';
 import { buildGroundedPrompt } from './grounding';
+import { ai as aiConfig, FREE_AI_MODEL } from '@/lib/config/env';
 
 const attachmentSchema = z.object({
   documentId: z.string().optional(), name: z.string().min(1), mimeType: z.string().min(1),
@@ -19,7 +20,7 @@ const documentChatSchema = z.object({
     mode: z.enum(['all-documents', 'current-folder', 'selected-documents']), folderId: z.string().optional(),
     folderName: z.string().optional(), documentIds: z.array(z.string()).optional(), documentCount: z.number().optional()
   }).optional(),
-  organizationId: z.string().min(1), model: z.string().default('nvidia/nemotron-3-super-120b-a12b:free'),
+  organizationId: z.string().min(1), model: z.string().default(FREE_AI_MODEL),
   temperature: z.number().min(0).max(2).default(0.3), maxTokens: z.number().int().min(1).max(8000).default(2000)
 });
 
@@ -45,6 +46,12 @@ export async function POST(request: NextRequest) {
     const parsed = documentChatSchema.safeParse(await request.json());
     if (!parsed.success) return NextResponse.json({ error: 'Invalid request data', details: parsed.error.format() }, { status: 400 });
     const input = parsed.data;
+
+    if (!aiConfig.openrouterApiKey) return NextResponse.json({
+      success: false,
+      error: 'AI service not configured',
+      message: 'Configure OPENROUTER_API_KEY to use the free OpenRouter model.'
+    }, { status: 503 });
 
     const user = await prisma.user.findFirst({ where: { clerkId: userId, organizationId: input.organizationId }, select: { id: true } });
     if (!user) return NextResponse.json({ error: 'Access denied to organization' }, { status: 403 });
@@ -97,8 +104,14 @@ export async function POST(request: NextRequest) {
     ];
     const aiService = AIServiceManager.getInstance();
     await aiService.initialize();
-    const response = await aiService.generateCompletion({
-      messages, model: input.model,
+    const openrouter = aiService.getOpenRouterAdapter();
+    if (!openrouter) return NextResponse.json({
+      success: false,
+      error: 'OpenRouter is unavailable',
+      message: 'The configured free OpenRouter model could not be reached.'
+    }, { status: 503 });
+    const response = await openrouter.generateCompletion({
+      messages, model: FREE_AI_MODEL,
       temperature: input.temperature, maxTokens: input.maxTokens,
       metadata: { provider: 'openrouter', organizationId: input.organizationId }
     });

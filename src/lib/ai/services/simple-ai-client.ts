@@ -1,3 +1,5 @@
+import { config as loadDotenv } from 'dotenv';
+
 /**
  * Simple AI client that bypasses complex routing and directly calls OpenRouter
  */
@@ -35,8 +37,8 @@ export class SimpleAIClient {
       process.env.NODE_ENV !== 'production'
     ) {
       try {
-        require('dotenv').config({ path: '.env.local' })
-      } catch (error) {
+          loadDotenv({ path: '.env.local' })
+        } catch {
         // Dotenv might not be available in all contexts
         console.warn('⚠️ [AI CLIENT] Could not load .env.local file')
       }
@@ -81,7 +83,7 @@ export class SimpleAIClient {
   private calculateCost(model: string, usage: any): number {
     // Cost per million tokens (approximate)
     const costMap: Record<string, { input: number; output: number }> = {
-      "nvidia/nemotron-3-super-120b-a12b:free": { input: 0, output: 0 },
+      "nvidia/nemotron-3.5-lightning:free": { input: 0, output: 0 },
       "deepseek/deepseek-chat": { input: 0.14, output: 0.28 },
       "deepseek/deepseek-r1": { input: 0.55, output: 2.19 },
       "anthropic/claude-3-haiku": { input: 0.25, output: 1.25 },
@@ -93,7 +95,7 @@ export class SimpleAIClient {
       "gpt-4o": { input: 2.5, output: 10.0 }
     };
 
-    const costs = costMap[model] || costMap['nvidia/nemotron-3-super-120b-a12b:free'];
+    const costs = costMap[model] || costMap['nvidia/nemotron-3.5-lightning:free'];
     const inputCost = (usage.prompt_tokens / 1_000_000) * costs.input;
     const outputCost = (usage.completion_tokens / 1_000_000) * costs.output;
 
@@ -126,7 +128,7 @@ export class SimpleAIClient {
     }
 
     // All other models use OpenRouter (including Anthropic, DeepSeek, Llama, etc.)
-    if (model === 'nvidia/nemotron-3-super-120b-a12b:free' ||
+    if (model === 'nvidia/nemotron-3.5-lightning:free' ||
         model.startsWith('openrouter/') ||
         model.includes('claude-') ||
         model.includes('deepseek-') ||
@@ -147,7 +149,7 @@ export class SimpleAIClient {
     console.warn(`⚠️ [AI CLIENT] Unknown model ${model}, defaulting to OpenRouter free router`)
     return {
       provider: 'OpenRouter',
-      actualModel: 'nvidia/nemotron-3-super-120b-a12b:free',
+      actualModel: 'nvidia/nemotron-3.5-lightning:free',
       apiKey: envOpenRouter || this.apiKey,
       baseUrl: 'https://openrouter.ai/api/v1',
       isOpenRouter: true
@@ -218,6 +220,7 @@ export class SimpleAIClient {
           messages: request.messages,
           max_tokens: request.maxTokens || 4000, // 4k tokens max for GPT-4 Turbo output
           temperature: request.temperature || 0.3,
+          reasoning: { enabled: false },
           stream: false,
         }),
         signal: controller.signal,

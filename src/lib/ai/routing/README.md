@@ -60,7 +60,7 @@ const routing = await simpleIntentRouter.route({
 console.log(routing.classification.intent); // 'file_processing'
 console.log(routing.classification.subIntent); // 'extract'
 console.log(routing.provider); // 'openrouter'
-console.log(routing.model); // 'nvidia/nemotron-3-super-120b-a12b:free'
+console.log(routing.model); // 'nvidia/nemotron-3.5-lightning:free'
 ```
 
 ### Prompt Injection for OpenRouter
@@ -112,7 +112,7 @@ The router uses cheap models for classification:
 ```typescript
 private readonly CLASSIFIER_MODELS = {
   primary: 'openai/gpt-3.5-turbo',     // Main classifier
-  fallback: 'nvidia/nemotron-3-super-120b-a12b:free',
+  fallback: 'nvidia/nemotron-3.5-lightning:free',
   structured: 'openai/gpt-3.5-turbo'  // For JSON responses
 };
 ```

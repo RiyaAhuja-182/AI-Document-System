@@ -2392,8 +2392,7 @@ const DocumentsPageContent = () => {
 
   const renderFilePreview = useCallback((doc) => {
     // Check if this is a created document (no actual file)
-    const isCreatedDocument = doc.filePath?.startsWith('/documents/') || 
-      (!doc.originalFile && doc.filePath && !doc.filePath.includes('/api/v1/documents/') && !doc.filePath.includes('supabase'));
+    const isCreatedDocument = doc.filePath?.startsWith('/documents/');
     
     // Debug logging for created document detection
     console.log('renderFilePreview - Created document check:', {

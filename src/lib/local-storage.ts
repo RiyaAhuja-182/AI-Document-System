@@ -107,7 +107,9 @@ export async function existsInLocal(filePath: string): Promise<boolean> {
  */
 export async function readFromLocal(filePath: string): Promise<Buffer | null> {
   const uploadRoot = path.resolve(UPLOAD_DIR)
-  const requestedPath = path.resolve(filePath)
+  const requestedPath = filePath.startsWith('/uploads/')
+    ? path.resolve(UPLOAD_DIR, path.basename(filePath))
+    : path.resolve(filePath)
 
   if (requestedPath !== uploadRoot && !requestedPath.startsWith(`${uploadRoot}${path.sep}`)) {
     return null

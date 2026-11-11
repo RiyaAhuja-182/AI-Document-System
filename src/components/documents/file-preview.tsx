@@ -169,8 +169,7 @@ export const FilePreview: React.FC<FilePreviewProps> = ({ document: doc, classNa
   const originalFileName = getOriginalFileName(doc)
   
   // Check if this is a created document (no actual file)
-  const isCreatedDocument = doc.filePath?.startsWith('/documents/') || 
-    (!doc.originalFile && doc.filePath && !doc.filePath.includes('/api/v1/documents/') && !doc.filePath.includes('supabase'));
+  const isCreatedDocument = doc.filePath?.startsWith('/documents/');
   
   // Debug logging for created document detection (development only)
   if (process.env.NODE_ENV === 'development') {

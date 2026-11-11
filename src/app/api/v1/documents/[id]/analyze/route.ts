@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@clerk/nextjs/server';
 import { prisma } from '@/lib/db';
-import { inngest } from '@/lib/inngest/client';
+import { inngest, isInngestEventConfigured } from '@/lib/inngest/client';
 import { UsageTrackingService, UsageType } from '@/lib/usage-tracking';
 
 /**
@@ -230,6 +230,12 @@ export async function POST(
         where: { id: documentId },
         data: { processing: cleanProcessing }
       });
+
+      // Do not call Inngest with absent or placeholder credentials. The
+      // synchronous path below is the supported local/degraded-mode path.
+      if (!isInngestEventConfigured()) {
+        throw new Error('Inngest is not configured; using synchronous analysis fallback');
+      }
 
       // Send analysis job to Inngest
       const analysisJobId = await inngest.send({

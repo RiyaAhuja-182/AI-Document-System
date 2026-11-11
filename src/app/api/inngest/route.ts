@@ -1,5 +1,5 @@
 import { serve } from "inngest/next";
-import { inngest } from "../../../lib/inngest/client";
+import { inngest, isInngestConfigured } from "../../../lib/inngest/client";
 import * as functions from "../../../lib/inngest/functions";
 
 /**
@@ -17,7 +17,9 @@ const handler = serve({
   client: inngest,
   functions: Object.values(functions),
   // Only use signing key in production - dev mode doesn't need it and causes issues
-  signingKey: process.env.NODE_ENV === 'production' ? process.env.INNGEST_SIGNING_KEY : undefined,
+  signingKey: process.env.NODE_ENV === 'production' && isInngestConfigured()
+    ? process.env.INNGEST_SIGNING_KEY
+    : undefined,
   // Disable landing page in production
   landingPage: process.env.NODE_ENV !== 'production',
   // Enable streaming while using the boolean option supported by Inngest v4

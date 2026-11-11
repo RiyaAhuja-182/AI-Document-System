@@ -153,7 +153,7 @@ export async function GET(
     }
 
     // Determine overall processing status
-    let overallStatus = processingData.currentStatus || 'PENDING';
+    let overallStatus = processingData.currentStatus || processingData.status || 'PENDING';
     
     // Enhanced logging for status polling debugging
     console.log(`📊 [STATUS API] Document ${documentId} status check:`, {

@@ -1,5 +1,10 @@
+import { PHASE_DEVELOPMENT_SERVER } from 'next/constants.js'
+
 /** @type {import('next').NextConfig} */
-const nextConfig = {
+const nextConfig = (phase) => ({
+  // Keep the dev compiler isolated from production builds. Both commands
+  // otherwise write `.next` concurrently and can leave missing vendor chunks.
+  distDir: phase === PHASE_DEVELOPMENT_SERVER ? '.next-dev' : '.next',
   // Hide the Next.js development indicator shown in the bottom-left corner.
   devIndicators: false,
   eslint: {
@@ -96,6 +101,6 @@ const nextConfig = {
       },
     ];
   },
-}
+})
 
 export default nextConfig

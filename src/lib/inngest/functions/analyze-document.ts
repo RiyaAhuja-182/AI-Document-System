@@ -731,6 +731,8 @@ export const analyzeDocument = inngest.createFunction(
         console.log(`📊 [INNGEST] About to save - analysisData structure:`, JSON.stringify(analysisData, null, 2).substring(0, 500));
 
         try {
+          const hasUserEditedContent = (document.content as any)?.editorSource === 'user'
+
           await prisma.document.update({
             where: { id: documentId },
             data: {
@@ -750,7 +752,9 @@ export const analyzeDocument = inngest.createFunction(
             ...((sectionsAnalysis.sections || contentAnalysisData.summary) && {
               content: {
                 ...(document.content as any),
-                sections: sectionsAnalysis.sections || (document.content as any)?.sections || [],
+                sections: hasUserEditedContent
+                  ? (document.content as any)?.sections || []
+                  : sectionsAnalysis.sections || (document.content as any)?.sections || [],
                 // Only update extractedText in content if we got fresh file content
                 ...(metadata?.hasFile && contentData.textContent?.length > 0 && {
                   extractedText: contentData.textContent

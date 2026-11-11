@@ -25,6 +25,7 @@ const uploadSchema = z.object({
   .describe("Schema for validating document upload requests. Ensures proper organization-level access control and document isolation.");
 
 export async function POST(request: NextRequest) {
+  let basicProcessingError: string | null = null
   try {
     const { userId } = await auth();
     if (!userId) {
@@ -223,7 +224,9 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      filePath = localResult.path || filePath;
+      // Persist the stable public upload path, not the machine-specific absolute
+      // filesystem path. The download route resolves this path safely.
+      filePath = localResult.url || `/uploads/${fileName}`;
       storageUrl = localResult.url || `/uploads/${fileName}`;
       console.log('✅ File uploaded to local storage:', storageUrl);
     }
@@ -288,9 +291,13 @@ export async function POST(request: NextRequest) {
           // Initialize processing status in JSON field
           processing: {
             status: 'PENDING',
+            currentStatus: 'PENDING',
+            progress: 0,
+            currentStep: 'Queued for basic processing',
             startedAt: null,
             completedAt: null,
-            error: null
+            error: null,
+            events: []
           },
           
           // Initialize other required JSON fields with empty objects
@@ -339,6 +346,7 @@ export async function POST(request: NextRequest) {
           console.log('✅ Basic processing completed successfully for document:', documentId);
         } else {
           console.error('❌ Basic processing failed:', processingResult.error);
+          basicProcessingError = processingResult.error || 'Processing failed'
           // Update document status to failed
           await prisma.document.update({
             where: { id: documentId },
@@ -353,6 +361,7 @@ export async function POST(request: NextRequest) {
         }
       } catch (error) {
         console.error('❌ Failed to process document with basic processing:', error);
+        basicProcessingError = error instanceof Error ? error.message : 'Unknown processing error'
         // Update document status to failed
         await prisma.document.update({
           where: { id: documentId },
@@ -375,13 +384,27 @@ export async function POST(request: NextRequest) {
         urlData = data;
       }
 
+      const finalDocument = await prisma.document.findUnique({
+        where: { id: document.id },
+        select: { processing: true }
+      })
+      const finalStatus = (finalDocument?.processing as any)?.currentStatus || 'PENDING'
+
+      if (basicProcessingError || finalStatus === 'FAILED') {
+        return NextResponse.json({
+          id: document.id,
+          status: 'FAILED',
+          error: basicProcessingError || (finalDocument?.processing as any)?.error || 'Document processing failed'
+        }, { status: 500 })
+      }
+
       return NextResponse.json({
         id: document.id,
         name: document.name,
         size: document.size,
         type: effectiveMimeType,
         uploadedAt: document.createdAt,
-        status: (document.processing as any)?.status || 'PENDING',
+        status: finalStatus,
         url: urlData?.signedUrl,
         message: 'Document uploaded and basic processing completed successfully.',
         processingStatus: 'BASIC_COMPLETED'

@@ -6,6 +6,8 @@
 
 import { z } from 'zod'
 
+export const FREE_AI_MODEL = 'nvidia/nemotron-3.5-lightning:free'
+
 // Environment variable schemas with validation
 const envSchema = z.object({
   // Database
@@ -798,20 +800,20 @@ const envSchema = z.object({
   // AI Model Configuration
   AI_MODEL_FAST: z
     .string()
-    .default('nvidia/nemotron-3-super-120b-a12b:free')
-    .describe('Fast AI model for simple tasks. Default: nvidia/nemotron-3-super-120b-a12b:free'),
+    .default(FREE_AI_MODEL)
+    .describe(`Fast AI model for simple tasks. Default: ${FREE_AI_MODEL}`),
   AI_MODEL_BALANCED: z
     .string()
-    .default('nvidia/nemotron-3-super-120b-a12b:free')
-    .describe('Balanced AI model for general tasks. Default: nvidia/nemotron-3-super-120b-a12b:free'),
+    .default(FREE_AI_MODEL)
+    .describe(`Balanced AI model for general tasks. Default: ${FREE_AI_MODEL}`),
   AI_MODEL_POWERFUL: z
     .string()
-    .default('nvidia/nemotron-3-super-120b-a12b:free')
-    .describe('Powerful AI model for complex tasks. Default: nvidia/nemotron-3-super-120b-a12b:free'),
+    .default(FREE_AI_MODEL)
+    .describe(`Powerful AI model for complex tasks. Default: ${FREE_AI_MODEL}`),
   AI_DEFAULT_MODEL: z
     .string()
-    .default('nvidia/nemotron-3-super-120b-a12b:free')
-    .describe('Default AI model when no specific model is requested. Default: nvidia/nemotron-3-super-120b-a12b:free'),
+    .default(FREE_AI_MODEL)
+    .describe(`Default AI model when no specific model is requested. Default: ${FREE_AI_MODEL}`),
   AI_MAX_TOKENS: z.coerce
     .number()
     .default(16000)

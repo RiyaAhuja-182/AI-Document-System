@@ -12,7 +12,7 @@ describe('SimpleAIClient OpenRouter free router', () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: async () => ({
-        model: 'nvidia/nemotron-3-super-120b-a12b:free',
+        model: 'nvidia/nemotron-3.5-lightning:free',
         choices: [{ message: { content: 'ok' } }],
         usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 }
       })
@@ -23,14 +23,15 @@ describe('SimpleAIClient OpenRouter free router', () => {
     const client = new SimpleAIClient();
 
     await client.generateCompletion({
-      model: 'nvidia/nemotron-3-super-120b-a12b:free',
+      model: 'nvidia/nemotron-3.5-lightning:free',
       messages: [{ role: 'user', content: 'Hello' }]
     });
 
     const [, request] = mockFetch.mock.calls[0];
-    const body = JSON.parse(request?.body as string) as { model: string };
+    const body = JSON.parse(request?.body as string) as { model: string; reasoning: { enabled: boolean } };
 
     expect(mockFetch.mock.calls[0][0]).toBe('https://openrouter.ai/api/v1/chat/completions');
-    expect(body.model).toBe('nvidia/nemotron-3-super-120b-a12b:free');
+    expect(body.model).toBe('nvidia/nemotron-3.5-lightning:free');
+    expect(body.reasoning).toEqual({ enabled: false });
   });
 });

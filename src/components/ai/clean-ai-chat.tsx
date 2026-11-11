@@ -6,8 +6,9 @@ import { useNotify } from '@/contexts/notification-context';
 import { useAI, useAIModels, useAIFeatures } from '@/stores/document-chat-store';
 import { useImageRouterStore } from '@/stores/imagerouter-store';
 import { validateFile, createCorrectedFile } from '@/lib/file-validation';
-import { ai as aiConfig } from '@/lib/config/env';
+import { ai as aiConfig, FREE_AI_MODEL } from '@/lib/config/env';
 import { createApiKeyHeaders } from '@/lib/client/api-key-manager';
+import { parseAIAPIError } from '@/lib/client/ai-api-errors';
 import { hybridFileProcessor } from '@/lib/file-processing/hybrid-processor';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -256,15 +257,16 @@ export function CleanAIChat({ organizationId, className, onCitationsUpdate, chat
   const [modalMode, setModalMode] = useState<'text' | 'media'>('text');
 
   // AI settings derived from Zustand store
-  const selectedModel = ai.selectedModel || aiConfig.defaultModel;
+  // The assistant is pinned to the repository's configured free OpenRouter model.
+  const selectedModel = FREE_AI_MODEL;
 
   // Initialize mounted state and default text model
   useEffect(() => {
     setIsMounted(true);
 
     // Ensure we start with a text generation model, not an image model
-    if (!ai.selectedModel || ai.selectedModel.includes('test/test') || ai.selectedModel.includes('ir/')) {
-      ai.setSelectedModel(aiConfig.defaultModel);
+    if (ai.selectedModel !== FREE_AI_MODEL) {
+      ai.setSelectedModel(FREE_AI_MODEL);
     }
   }, []);
 
@@ -373,59 +375,6 @@ export function CleanAIChat({ organizationId, className, onCitationsUpdate, chat
     }
   }, [isLoaded, isSignedIn, models.length, ai.loading]); // Depend on auth state
   
-  // Initialize ImageRouter models if not already loaded (optional feature)
-  useEffect(() => {
-    const loadImageRouterModels = async () => {
-      if (imageRouter.models.length === 0 && !imageRouter.isLoading) {
-        console.log('🎨 Loading ImageRouter models...');
-        try {
-          imageRouter.actions.setLoading(true);
-          
-          // Fetch ImageRouter models from the API with authentication
-          const response = await fetch('/api/v1/ai/providers/imagerouter/models', {
-            method: 'GET',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            credentials: 'include', // Include cookies for authentication
-          });
-          
-          if (response.ok) {
-            const models = await response.json();
-            imageRouter.actions.setModels(models);
-            console.log('✅ ImageRouter models loaded:', models.length);
-          } else {
-            console.warn('⚠️ Failed to load ImageRouter models:', response.status, response.statusText);
-            // Log response text for debugging
-            try {
-              const errorText = await response.text();
-              console.warn('⚠️ ImageRouter error response:', errorText);
-            } catch (e) {
-              console.warn('⚠️ Could not read error response');
-            }
-            
-            // Set empty models array to prevent further attempts
-            imageRouter.actions.setModels([]);
-          }
-        } catch (error) {
-          console.error('❌ Error loading ImageRouter models:', error);
-          // The error is likely a network issue, auth issue, or the API endpoint is down
-          // Since the API has fallback models, this shouldn't break the UI
-          console.log('⚠️ ImageRouter models will be unavailable, but the chat will still work');
-          
-          // Set empty models array to prevent retries and stop the error loop
-          imageRouter.actions.setModels([]);
-        } finally {
-          imageRouter.actions.setLoading(false);
-        }
-      }
-    };
-    
-    // Only attempt to load ImageRouter models once per session
-    // If it fails, we set an empty array to prevent retries
-    loadImageRouterModels();
-  }, []); // Empty dependency array to run only once
-
   // Convert Zustand models to legacy format for backward compatibility
   const providers: AIProvider[] = useMemo(() => {
     const providerMap = new Map<string, AIProvider>();
@@ -445,24 +394,9 @@ export function CleanAIChat({ organizationId, className, onCitationsUpdate, chat
       description: 'OpenRouter provider with 100+ models'
     });
 
-    // Always include ImageRouter provider (even if models aren't loaded yet)
-    providerMap.set('imagerouter', {
-      id: 'imagerouter',
-      name: 'ImageRouter',
-      status: 'active',
-      models: [],
-      priority: 2,
-      costPerPromptToken: 0.0002,
-      costPerCompletionToken: 0.0008,
-      maxTokens: 4000,
-      rateLimitPerMinute: 30,
-      features: ['image-generation', 'video-generation'],
-      description: 'ImageRouter provider for AI image and video generation'
-    });
-
     // Add models to OpenRouter provider from Zustand store
     if (models.length > 0) {
-      models.forEach(model => {
+      models.filter(model => model.name === FREE_AI_MODEL && model.provider === 'openrouter').forEach(model => {
         const providerId = model.provider || (model.name.includes('/') ? model.name.split('/')[0] : 'openrouter');
 
         // Get or create provider
@@ -500,33 +434,12 @@ export function CleanAIChat({ organizationId, className, onCitationsUpdate, chat
       });
     }
 
-    // Add ImageRouter models if available
-    if (imageRouter.models.length > 0) {
-      const imageRouterProvider = providerMap.get('imagerouter')!;
-      imageRouter.models.forEach((model: any) => {
-        imageRouterProvider.models.push({
-          id: model.id || model.name,
-          name: model.name || model.displayName,
-          description: model.description || `${model.name} via ImageRouter`,
-          maxTokens: 4000,
-          costPerPromptToken: 0.0002,
-          costPerCompletionToken: 0.0008,
-          features: model.features || ['image-generation'],
-          provider: 'imagerouter',
-          tier: 'balanced',
-          quality: 85,
-          speed: 80,
-          cost: 30
-        });
-      });
-    }
-
     // If no models loaded for OpenRouter, add fallback models
     const openRouterProvider = providerMap.get('openrouter')!;
     if (openRouterProvider.models.length === 0) {
       openRouterProvider.models = [
         {
-          id: aiConfig.defaultModel,
+          id: FREE_AI_MODEL,
           name: 'Free Model Router (OpenRouter)',
           description: 'Automatically selects an available free model via OpenRouter',
           maxTokens: 128000,
@@ -542,29 +455,8 @@ export function CleanAIChat({ organizationId, className, onCitationsUpdate, chat
       ];
     }
 
-    // If no models loaded for ImageRouter, add fallback models
-    const imageRouterProvider = providerMap.get('imagerouter')!;
-    if (imageRouterProvider.models.length === 0) {
-      imageRouterProvider.models = [
-        {
-          id: 'test/test',
-          name: 'Test Image Model',
-          description: 'AI image generation via ImageRouter',
-          maxTokens: 4000,
-          costPerPromptToken: 0.0002,
-          costPerCompletionToken: 0.0008,
-          features: ['image-generation'],
-          provider: 'imagerouter',
-          tier: 'balanced',
-          quality: 85,
-          speed: 80,
-          cost: 30
-        }
-      ];
-    }
-
     return Array.from(providerMap.values());
-  }, [models, imageRouter.models]);
+  }, [models]);
 
   // Dynamically determine provider based on selected model (must be after providers)
   const selectedProvider = useMemo(() => {
@@ -728,15 +620,18 @@ export function CleanAIChat({ organizationId, className, onCitationsUpdate, chat
                 ai.setSelectedModel(modelToSet);
               } else {
                 console.error('❌ Still no ImageRouter models after loading');
-                ai.setSelectedModel('openai/dall-e-3'); // Fallback
+                setImageGenerationMode(false);
+                notifyError('Image generation is unavailable. The assistant uses the configured free text model.');
               }
             } else {
               console.error('❌ Failed to load ImageRouter models:', response.status);
-              ai.setSelectedModel('openai/dall-e-3'); // Fallback
+              setImageGenerationMode(false);
+              notifyError('Image generation is unavailable. The assistant uses the configured free text model.');
             }
           } catch (error) {
             console.error('❌ Error loading ImageRouter models:', error);
-            ai.setSelectedModel('openai/dall-e-3'); // Fallback
+            setImageGenerationMode(false);
+            notifyError('Image generation is unavailable. The assistant uses the configured free text model.');
           } finally {
             imageRouter.actions.setLoading(false);
           }
@@ -748,7 +643,8 @@ export function CleanAIChat({ organizationId, className, onCitationsUpdate, chat
           ai.setSelectedModel(modelToSet);
         } else {
           console.error('❌ No ImageRouter models available, using fallback');
-          ai.setSelectedModel('openai/dall-e-3'); // Final fallback
+          setImageGenerationMode(false);
+          notifyError('Image generation is unavailable. The assistant uses the configured free text model.');
         }
       }
     } else {
@@ -783,7 +679,7 @@ export function CleanAIChat({ organizationId, className, onCitationsUpdate, chat
         }, 100);
       } else {
         console.warn('⚠️ OpenRouter provider not found or no models, using fallback');
-        ai.setSelectedModel(aiConfig.defaultModel); // Configured model fallback
+        ai.setSelectedModel(FREE_AI_MODEL);
       }
     }
   };
@@ -883,7 +779,12 @@ export function CleanAIChat({ organizationId, className, onCitationsUpdate, chat
         console.log('🎨 Image generation mode enabled, using selected image model');
         
         // Use the model that was already set by the toggle (from providers array)
-        const modelToUse = selectedModel || 'openai/dall-e-3';
+        const modelToUse = imageRouter.models[0]?.id || imageRouter.models[0]?.name;
+        if (!modelToUse) {
+          setImageGenerationMode(false);
+          notifyError('Image generation is unavailable. The assistant uses the configured free text model.');
+          return;
+        }
         
         console.log('🎨 Using selected image model:', {
           id: modelToUse,
@@ -952,7 +853,7 @@ export function CleanAIChat({ organizationId, className, onCitationsUpdate, chat
       }
       
       // 4. DEFAULT: Text generation with file processing
-      const modelToUse = selectedModel;
+      const modelToUse = FREE_AI_MODEL;
       console.log('💬 Text/file processing mode, using model:', modelToUse);
 
       setCurrentlyUsedModel(modelToUse);
@@ -1240,7 +1141,7 @@ Provide accurate, helpful, and professional assistance.`
           documentContext: chatState.documentScope,
           useVercelOptimized: false,
           streamingEnabled: false,
-          model: aiConfig.defaultModel,
+          model: FREE_AI_MODEL,
           temperature: 0.3, // Lower temperature for factual responses
         });
       }
@@ -1257,42 +1158,21 @@ Provide accurate, helpful, and professional assistance.`
       console.log('✅ Fetch completed, response status:', response.status);
       
       if (!response.ok) {
-        // Handle different error types
         const responseText = await response.text();
-        let errorData: Record<string, unknown> = {};
-        if (responseText.trim()) {
-          try {
-            const parsed: unknown = JSON.parse(responseText);
-            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-              errorData = parsed as Record<string, unknown>;
-            }
-          } catch (parseError) {
-            console.error('❌ Could not parse API error response:', parseError);
-          }
-        }
+        const errorData = parseAIAPIError(responseText);
         console.error('❌ API Error Response:', {
           status: response.status,
           statusText: response.statusText,
-          body: responseText,
-          data: errorData,
+          code: errorData.code,
+          error: errorData.error,
+          message: errorData.message,
         });
 
-        const apiError = typeof errorData.error === 'string' ? errorData.error : undefined;
-        const apiMessage = typeof errorData.message === 'string' ? errorData.message : undefined;
+        const apiError = errorData.error;
+        const apiMessage = errorData.message;
         
         if (response.status === 400) {
-          // Validation error - show details
-          console.error('🔍 Validation Error Details:', errorData.details);
-          console.error('🔍 Full error response:', errorData);
-          // Show specific validation error
-          const firstError = Array.isArray(errorData.details) ? errorData.details[0] : undefined;
-          if (firstError && typeof firstError === 'object') {
-            const detail = firstError as Record<string, unknown>;
-            console.error('🔍 First validation error:', detail);
-            notifyError(`Validation failed: ${String(detail.message || detail.code || 'Unknown error')}`);
-          } else {
-            notifyError('Request validation failed. Check console for details.');
-          }
+          notifyError(apiMessage || apiError || 'The AI request was rejected. Check that the message and document are valid.');
           return;
         }
 
@@ -1307,20 +1187,22 @@ Provide accurate, helpful, and professional assistance.`
         }
         
         if (response.status === 429) {
-          // Rate limit or quota exceeded
           setHasUsageQuota(false);
-          notifyError('Usage limit reached. Please try again later or check your billing.');
+          notifyError(apiMessage || 'The free AI model is busy. Please wait a moment and try again.');
           return;
         }
 
         if (response.status === 401) {
-          // API key issue
-          setApiKeyConfigured(false);
-          notifyError('API configuration issue. Please check your API keys in settings.');
+          if (errorData.code === 'AUTHENTICATION_ERROR') {
+            setApiKeyConfigured(false);
+            notifyError(apiMessage || 'OpenRouter rejected its API key. Check OPENROUTER_API_KEY in the server environment.');
+          } else {
+            notifyError('Your session has expired. Please sign in again.');
+          }
           return;
         }
         
-        throw new Error(apiError || apiMessage || `API error: ${response.status}`);
+        throw new Error(apiMessage || apiError || `The AI service returned HTTP ${response.status}. Please try again.`);
       }
       
       // Check if response is JSON or streaming
@@ -1329,8 +1211,16 @@ Provide accurate, helpful, and professional assistance.`
       
       if (contentType?.includes('application/json')) {
         // Handle JSON response (non-streaming)
-        const responseData = await response.json();
-        console.log('📄 JSON response received:', responseData);
+        let responseData: Record<string, any>;
+        try {
+          const parsed: unknown = await response.json();
+          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            throw new Error('Unexpected response format');
+          }
+          responseData = parsed as Record<string, any>;
+        } catch {
+          throw new Error('The AI service returned an invalid response. Please try again.');
+        }
         console.log('🔍 Response structure check:', {
           hasResponseData: !!responseData,
           hasCitations: !!responseData.citations,
@@ -1347,7 +1237,10 @@ Provide accurate, helpful, and professional assistance.`
         }
         
         // Simulate streaming for JSON responses
-        const rawContent = responseData.content || responseData.message || 'No content received';
+        const rawContent = responseData.content || responseData.message;
+        if (typeof rawContent !== 'string' || !rawContent.trim()) {
+          throw new Error('The AI service returned an empty response. Please try again.');
+        }
         // Ensure content is always a string
         const content = ensureStringContent(rawContent);
         const actualModel = responseData.model || selectedModel;
@@ -1417,11 +1310,7 @@ Provide accurate, helpful, and professional assistance.`
           attachedFilesCount: attachedFiles.length,
           webCitations: webCitations.length,
           fileCitations: fileCitations.length,
-          allCitations: allCitations.length,
-          webCitationsData: webCitations,
-          fileCitationsData: fileCitations,
-          fullResponseData: responseData,
-          responseContent: content.substring(0, 500) + '...' // Show first 500 chars
+          allCitations: allCitations.length
         });
         
         // Update citations panel immediately if we have citations
@@ -1486,6 +1375,10 @@ Provide accurate, helpful, and professional assistance.`
         } finally {
           reader.releaseLock();
         }
+
+        if (!fullContent.trim()) {
+          throw new Error('The AI service returned an empty response. Please try again.');
+        }
         
         // Extract file citations from the final content
         const fileCitations = extractFileCitations(fullContent, attachedFiles);
@@ -1538,18 +1431,16 @@ Provide accurate, helpful, and professional assistance.`
       }
       
     } catch (error) {
-      console.error('Real AI API error:', error);
+      console.error('Real AI API request failed:', {
+        name: error instanceof Error ? error.name : 'UnknownError',
+        message: error instanceof Error ? error.message : 'Unknown error',
+      });
       
       // Handle specific error types
       if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
         console.error('❌ Network error - failed to fetch API endpoint');
         notifyError('Network error: Unable to connect to AI service. Please check your internet connection and try again.');
       } else if (error instanceof Error) {
-        console.error('❌ Error details:', {
-          name: error.name,
-          message: error.message,
-          stack: error.stack
-        });
         notifyError('AI service error: ' + error.message);
       } else {
         console.error('❌ Unknown error type:', error);
@@ -1841,7 +1732,7 @@ Would you like me to dive deeper into any aspects of your question?
 
   const calculateRealCost = (usage: any, model: string): number => {
     const costPerToken: Record<string, { prompt: number; completion: number }> = {
-      'nvidia/nemotron-3-super-120b-a12b:free': { prompt: 0, completion: 0 },
+      'nvidia/nemotron-3.5-lightning:free': { prompt: 0, completion: 0 },
       'gpt-4o': { prompt: 0.005, completion: 0.015 },
       'gpt-4o-mini': { prompt: 0.00015, completion: 0.0006 },
       'gpt-3.5-turbo': { prompt: 0.0005, completion: 0.0015 }
@@ -2635,15 +2526,16 @@ Would you like me to dive deeper into any aspects of your question?
                                 <div>
                                   <div className="text-sm font-medium text-foreground">Image Generation</div>
                                   <div className="text-xs text-muted-foreground">
-                                    {imageRouter.isLoading ? 'Loading models...' : 'Generate images instead of text'}
+                                    Unavailable with the free text model
                                   </div>
                                 </div>
                               </div>
                               <button
                                 type="button"
                                 onClick={handleImageGenerationToggle}
-                                disabled={imageRouter.isLoading || ai.loading}
-                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                                disabled
+                                aria-label="Image generation unavailable with the free text model"
+                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors opacity-50 cursor-not-allowed ${
                                   imageGenerationMode ? 'bg-primary' : 'bg-muted-foreground/30'
                                 } ${(imageRouter.isLoading || ai.loading) ? 'opacity-50 cursor-not-allowed' : ''}`}
                               >

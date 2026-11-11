@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import { cn } from '@/lib/utils';
+import DOMPurify from 'isomorphic-dompurify';
 
 export interface StableEditorProps {
   content?: string;
@@ -41,7 +42,7 @@ export const StableEditor = React.memo(function StableEditor({
   const handleInput = React.useCallback(() => {
     if (!editorRef.current || !onChange) return;
     
-    const newContent = editorRef.current.innerHTML;
+    const newContent = DOMPurify.sanitize(editorRef.current.innerHTML);
     // The parent will receive this exact value and rerender the controlled editor.
     // Mark it as synchronized so that rerender does not overwrite the browser selection.
     lastPropContent.current = newContent;
@@ -51,7 +52,7 @@ export const StableEditor = React.memo(function StableEditor({
   // Update content when prop changes
   React.useEffect(() => {
     if (editorRef.current && lastPropContent.current !== content) {
-      editorRef.current.innerHTML = content || '';
+      editorRef.current.innerHTML = DOMPurify.sanitize(content || '');
     }
     lastPropContent.current = content;
   }, [content]);

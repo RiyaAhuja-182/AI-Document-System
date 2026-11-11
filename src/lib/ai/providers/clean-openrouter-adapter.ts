@@ -18,7 +18,6 @@ import {
   RateLimitError,
   AuthenticationError,
   ValidationError,
-  QuotaExceededError,
   NetworkError,
   ProviderUnavailableError,
   ProviderConfigurationError
@@ -69,6 +68,9 @@ export interface OpenRouterRequest {
   }>;
   temperature?: number;
   max_tokens?: number;
+  reasoning?: {
+    enabled?: boolean;
+  };
   top_p?: number;
   frequency_penalty?: number;
   presence_penalty?: number;
@@ -234,7 +236,6 @@ export class CleanOpenRouterAdapter extends AIProviderAdapter {
     this.aiMetricsIntegration = new AIMetricsIntegration();
     
     // Load prompt caching configuration from environment
-    const { ai } = require('@/lib/config/env');
     this.promptCacheEnabled = ai.openrouterPromptCacheEnabled ?? true;
     this.promptCacheTtl = ai.openrouterPromptCacheTtl ?? 300;
     this.promptCacheMinTokens = ai.openrouterPromptCacheMinTokens ?? 1024;
@@ -565,6 +566,7 @@ export class CleanOpenRouterAdapter extends AIProviderAdapter {
         })),
         temperature: request.temperature || this.DEFAULT_TEMPERATURE,
         max_tokens: request.maxTokens,
+        reasoning: { enabled: false },
         stop: request.stopSequences,
         provider: {
           sort: 'price',
@@ -662,7 +664,6 @@ export class CleanOpenRouterAdapter extends AIProviderAdapter {
         temperature: openRouterRequest.temperature,
         max_tokens: openRouterRequest.max_tokens,
         webSearchOptions: openRouterRequest.web_search_options,
-        fullRequest: JSON.stringify(openRouterRequest, null, 2)
       });
 
       // Make request to OpenRouter
@@ -737,24 +738,15 @@ export class CleanOpenRouterAdapter extends AIProviderAdapter {
         console.log(`💾 Prompt cache hit! Saved ${cacheStats.cacheTokens} tokens, discount: ${cacheStats.cacheDiscount}, ratio: ${cacheStats.cacheHitRatio}`);
       }
 
-      // RAW AI RESPONSE LOG for analysis
-      console.log('🔍 RAW AI RESPONSE:', JSON.stringify(response, null, 2));
-
       // Extract citations from response annotations
       console.log('🔍 OpenRouter raw response structure:', {
         hasChoices: !!response.choices,
         choicesLength: response.choices?.length,
-        firstChoice: response.choices?.[0],
         hasMessage: !!response.choices?.[0]?.message,
-        message: response.choices?.[0]?.message,
-        annotations: response.choices?.[0]?.message?.annotations,
         annotationsCount: response.choices?.[0]?.message?.annotations?.length || 0,
-        responseContent: response.choices?.[0]?.message?.content?.substring(0, 500) + '...',
-        fullResponse: JSON.stringify(response, null, 2)
       });
       
       const citations = this.extractCitationsFromResponse(response);
-      console.log('📚 Extracted citations:', citations);
       console.log('📚 Citations count:', citations.length);
 
       return {
@@ -916,13 +908,12 @@ export class CleanOpenRouterAdapter extends AIProviderAdapter {
     const content = response.choices[0]?.message?.content || '';
     const citations: Citation[] = [];
     
-    console.log('🔍 Citation extraction - analyzing response content (first 1000 chars):', content.substring(0, 1000));
-    console.log('🔍 Citation extraction - full content length:', content.length);
+      console.log('🔍 Citation extraction - response content length:', content.length);
     
     // First check for annotations (some models may still use this)
     const annotations = response.choices[0]?.message?.annotations;
     if (annotations && annotations.length > 0) {
-      console.log('🔍 Found annotations in response:', annotations);
+      console.log('🔍 Found response annotations:', annotations.length);
       const annotationCitations = annotations
         .filter(annotation => annotation.type === 'url_citation')
         .map(annotation => ({
@@ -1597,7 +1588,6 @@ export class CleanOpenRouterAdapter extends AIProviderAdapter {
    */
   static getVisionModels(): string[] {
     return [
-      'nvidia/nemotron-3-super-120b-a12b:free',
       'openai/gpt-4o',
       'openai/gpt-4o-mini',
       'anthropic/claude-3.5-sonnet',
@@ -1725,7 +1715,7 @@ export class CleanOpenRouterAdapter extends AIProviderAdapter {
       'google/gemini-2.5-pro-exp'
     ];
     
-    return modelId === 'nvidia/nemotron-3-super-120b-a12b:free' || webSearchModels.includes(modelId) || modelId.includes('online');
+    return webSearchModels.includes(modelId) || modelId.includes('online');
   }
 
   /**

@@ -1,5 +1,14 @@
 import { Inngest } from "inngest";
 
+const isConfiguredSecret = (value: string | undefined): value is string =>
+  Boolean(value && !value.startsWith('your-') && !value.startsWith('REPLACE_'));
+
+export const isInngestEventConfigured = (): boolean =>
+  isConfiguredSecret(process.env.INNGEST_EVENT_KEY);
+
+export const isInngestConfigured = (): boolean =>
+  isInngestEventConfigured() && isConfiguredSecret(process.env.INNGEST_SIGNING_KEY);
+
 // Create an Inngest client
 export const inngest = new Inngest({
   id: "document-chat-system",
@@ -7,7 +16,9 @@ export const inngest = new Inngest({
    * Set the event key if provided in environment variables
    * This is used to send events to Inngest
    */
-  eventKey: process.env.INNGEST_EVENT_KEY,
+  eventKey: isConfiguredSecret(process.env.INNGEST_EVENT_KEY)
+    ? process.env.INNGEST_EVENT_KEY
+    : undefined,
   /**
    * Explicitly set environment for production
    * This helps Inngest match the correct app environment

@@ -46,6 +46,15 @@ import { Separator } from '@/components/ui/separator'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
   Select,
   SelectContent,
@@ -232,7 +241,7 @@ const generateSectionsFromDocument = (document: Document | null) => {
 
   // If truly minimal data, show simple content
   if (hasMinimalData) {
-    const status = document.processing?.currentStatus || 'PENDING';
+    const status = document.processing?.currentStatus || (document.processing as any)?.status || 'PENDING';
     const isProcessing = status === 'PROCESSING';
     const hasFailed = status === 'FAILED';
     
@@ -364,45 +373,26 @@ const generateSectionsFromDocument = (document: Document | null) => {
     }];
   }
 
-  // Handle fully processed documents with content data
+  const escapeHtml = (value: string): string => value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+
+  // Handle fully processed documents with content data. Stored editor HTML is
+  // the source of truth; only legacy plain-text sections are wrapped once.
   return document.content.sections.map((section, index) => {
-    const formattedContent = formatTextContent(section.content)
-    let content = `<h2>${section.title.replace(/^\d+\.\d+\s*/, '')}</h2>${formattedContent}`;
-    
-    // Add tables to appropriate sections if they exist
-    if (document.content?.tables && document.content.tables.length > 0) {
-      const shouldAddTable = section.title.toLowerCase().includes('project') || 
-                            section.title.toLowerCase().includes('plan') || 
-                            index === Math.min(2, document.content.sections.length - 1);
-      
-      if (shouldAddTable) {
-        const table = document.content.tables[0];
-        const tableTitle = table.caption || 'Data Table';
-        const tableHtml = `
-          <h3>${tableTitle}</h3>
-          <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
-            <thead>
-              <tr style="background-color: hsl(var(--muted)); border-bottom: 2px solid hsl(var(--border));">
-                ${table.headers.map(header => `<th style="padding: 12px; text-align: left; font-weight: 600;">${header}</th>`).join('')}
-              </tr>
-            </thead>
-            <tbody>
-              ${table.rows.map((row, idx) => `
-                <tr style="border-bottom: 1px solid hsl(var(--border)); ${idx % 2 === 1 ? 'background-color: hsl(var(--muted) / 0.35);' : ''}">
-                  ${row.map(cell => `<td style="padding: 12px;">${cell}</td>`).join('')}
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
-        `;
-        content = content.replace('</h2>', `</h2>${tableHtml}`);
-      }
-    }
+    const storedContent = typeof section.content === 'string' ? section.content : ''
+    const hasMarkup = /<\w[\s\S]*>/i.test(storedContent)
+    let content = hasMarkup
+      ? storedContent
+      : `<h2>${escapeHtml(section.title.replace(/^\d+\.\d+\s*/, ''))}</h2>${storedContent ? `<p>${escapeHtml(storedContent)}</p>` : ''}`
     
     return {
-      id: String(index + 1),
+      id: String(section.sectionId || index + 1),
       title: section.title,
-      content: content
+      content
     };
   });
 }
@@ -749,6 +739,11 @@ export function DocumentDetailsView({ documentId }: DocumentDetailsViewProps) {
     document?.processing?.currentStatus
   ])
   const [selectedSection, setSelectedSection] = useState<any>(null)
+  const [isAddSectionOpen, setIsAddSectionOpen] = useState(false)
+  const [newSectionTitle, setNewSectionTitle] = useState('')
+  const [newSectionContent, setNewSectionContent] = useState('')
+  const [isAddingSection, setIsAddingSection] = useState(false)
+  const [addSectionError, setAddSectionError] = useState<string | null>(null)
 
   // Update selected section when document or sections change
   React.useEffect(() => {
@@ -776,6 +771,8 @@ export function DocumentDetailsView({ documentId }: DocumentDetailsViewProps) {
   const [characterCount, setCharacterCount] = useState(0)
   const [wordCount, setWordCount] = useState(0)
   const [editorContent, setEditorContent] = useState('')
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle')
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   React.useEffect(() => {
     if (!selectedSection || hasUnsavedChanges) return
@@ -786,6 +783,75 @@ export function DocumentDetailsView({ documentId }: DocumentDetailsViewProps) {
     setCharacterCount(stats.characterCount)
     setWordCount(stats.wordCount)
   }, [selectedSection, hasUnsavedChanges])
+
+  const handleCreateSection = async () => {
+    const title = newSectionTitle.trim()
+    const content = newSectionContent.trim()
+    if (!title || !content) {
+      setAddSectionError('Section title and content are required.')
+      return
+    }
+    if (!document) return
+
+    setIsAddingSection(true)
+    setAddSectionError(null)
+    const sectionId = `section_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const currentContent = (document.content as any) || {}
+    const currentSections = Array.isArray(currentContent.sections) ? currentContent.sections : []
+    const section = {
+      sectionId,
+      title,
+      content,
+      level: 1,
+    }
+
+    try {
+      const response = await fetch(`/api/v1/documents/${document.id}/content`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'replace',
+          sections: [...currentSections, section],
+        }),
+      })
+      const result = await response.json()
+      if (!response.ok || !result.success || !result.document) {
+        throw new Error(result.error || 'Failed to create section.')
+      }
+
+      const updatedDocument = result.document as Document
+      setFetchedDocument(updatedDocument)
+      const existingDocument = findDocument(document.id)
+      await updateDocument(document.id, {
+        ...(existingDocument || document),
+        ...updatedDocument,
+        content: updatedDocument.content,
+      })
+      setSelectedSection({ id: sectionId, title, content })
+      setNewSectionTitle('')
+      setNewSectionContent('')
+      setIsAddSectionOpen(false)
+      notify.success('Section added', 'The new section has been saved.')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to create section.'
+      setAddSectionError(message)
+      notify.error('Failed to add section', message)
+    } finally {
+      setIsAddingSection(false)
+    }
+  }
+
+  React.useEffect(() => {
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!hasUnsavedChanges) return
+      event.preventDefault()
+      event.returnValue = ''
+    }
+
+    window.addEventListener('beforeunload', warnBeforeUnload)
+    return () => window.removeEventListener('beforeunload', warnBeforeUnload)
+  }, [hasUnsavedChanges])
   const [isMobile, setIsMobile] = useState(false)
   const [isUploadingFile, setIsUploadingFile] = useState(false)
   const [isVectorizing, setIsVectorizing] = useState(false)
@@ -1669,6 +1735,7 @@ export function DocumentDetailsView({ documentId }: DocumentDetailsViewProps) {
   
   const handleSaveDocument = async (overrideData?: Partial<typeof editableData>) => {
     if (!document) return
+    if (savingFields.has('all')) return
     
     // Use override data if provided, otherwise use current state
     const dataToSave = overrideData ? { ...editableData, ...overrideData } : editableData
@@ -1678,6 +1745,10 @@ export function DocumentDetailsView({ documentId }: DocumentDetailsViewProps) {
       deadline: dataToSave.deadline
     })
     
+    setSavingFields(prev => new Set(prev).add('all'))
+    setSaveStatus('saving')
+    setSaveError(null)
+
     try {
       const updatedSections = selectedSection
         ? updateEditableSections(document.content, selectedSection.id, editorContent, selectedSection.title).sections
@@ -1688,7 +1759,8 @@ export function DocumentDetailsView({ documentId }: DocumentDetailsViewProps) {
         name: documentTitle,
         documentType: dataToSave.documentType,
         description: document.description, // Preserve existing description
-        entities: dataToSave.entities // Add entities to payload
+        entities: dataToSave.entities, // Add entities to payload
+        expectedUpdatedAt: document.updatedAt
       }
       
       // Always include contract analysis to preserve existing data
@@ -1704,22 +1776,12 @@ export function DocumentDetailsView({ documentId }: DocumentDetailsViewProps) {
       // Include updated sections if editor content was modified
       if (updatedSections && document.content) {
         // Convert UI sections back to database sections format
-        const databaseSections = updatedSections.map(section => {
-          // Extract title from HTML content if it starts with <h2>
-          let title = section.title
-          let content = section.content
-          
-          // If content starts with <h2>, extract the title and remove it from content
-          const h2Match = content.match(/^<h2[^>]*>([^<]+)<\/h2>/)
-          if (h2Match) {
-            title = h2Match[1]
-            content = content.replace(/^<h2[^>]*>[^<]+<\/h2>/, '').trim()
-          }
-          
+        const databaseSections = updatedSections.map((section, index) => {
           return {
-            title: title,
-            content: content,
-            pageNumber: 1 // Default page number
+            sectionId: section.sectionId || String(index + 1),
+            title: section.title,
+            content: section.content,
+            pageNumber: section.pageNumber || 1
           }
         })
         
@@ -1744,7 +1806,8 @@ export function DocumentDetailsView({ documentId }: DocumentDetailsViewProps) {
       })
       
       if (!response.ok) {
-        throw new Error('Failed to update document')
+        const errorBody = await response.json().catch(() => null)
+        throw new Error(errorBody?.error || `Failed to update document (${response.status})`)
       }
       
       const result = await response.json()
@@ -1832,19 +1895,38 @@ export function DocumentDetailsView({ documentId }: DocumentDetailsViewProps) {
       
       // If we updated sections and there's a selected section, update the current section content
       if (updatedSections && selectedSection) {
-        const updatedSection = updatedSections.find(s => s.id === selectedSection.id)
+        const updatedSection = updatedSections.find((section, index) =>
+          String(section.sectionId || index + 1) === selectedSection.id
+        )
         if (updatedSection) {
-          console.log('📝 Updating selected section with saved content')
-          setSelectedSection(updatedSection)
+          setSelectedSection({
+            ...selectedSection,
+            title: updatedSection.title,
+            content: updatedSection.content
+          })
         }
       }
       
+      setPendingChanges({})
+      setHasUnsavedChanges(false)
+      setSaveStatus('saved')
       // Show success notification
       notify.success('Document Saved', 'All changes have been saved to the database.')
       console.log('✅ Document saved successfully and store updated')
+      return true
     } catch (err) {
       console.error('❌ Failed to save document:', err)
-      notify.error('Failed to Save Document', 'Please check your connection and try again.')
+      const message = err instanceof Error ? err.message : 'Please check your connection and try again.'
+      setSaveStatus('failed')
+      setSaveError(message)
+      notify.error('Failed to Save Document', message)
+      return false
+    } finally {
+      setSavingFields(prev => {
+        const next = new Set(prev)
+        next.delete('all')
+        return next
+      })
     }
   }
   
@@ -2097,53 +2179,8 @@ export function DocumentDetailsView({ documentId }: DocumentDetailsViewProps) {
     
     console.log('💾 Saving all pending changes:', pendingChanges)
     
-    try {
-      const latestContent = selectedSection
-        ? updateEditableSections(document.content, selectedSection.id, editorContent, selectedSection.title)
-        : pendingChanges.content
-      const savePayload = latestContent
-        ? { ...pendingChanges, content: latestContent }
-        : pendingChanges
-
-      const response = await fetch(`/api/v1/documents/${document.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(savePayload)
-      })
-      
-      if (!response.ok) {
-        const errorText = await response.text()
-        console.error('❌ Save failed:', response.status, errorText)
-        throw new Error(`Save failed: ${response.status} - ${errorText}`)
-      }
-      
-      const responseData = await response.json()
-      console.log('✅ All changes saved successfully')
-      
-      // Update store with response
-      if (responseData.document) {
-        updateDocument(document.id, responseData.document)
-        setFetchedDocument((current) => current ? { ...current, ...responseData.document } : responseData.document)
-      }
-      
-      // Clear pending changes
-      setPendingChanges({})
-      setHasUnsavedChanges(false)
-      
-      // Show success message
-      if (notify) {
-        notify.success('Changes saved successfully!')
-      }
-      
-      // Exit editing mode
-      setIsEditing(false)
-      
-    } catch (error) {
-      console.error('❌ Failed to save changes:', error)
-      if (notify) {
-        notify.error('Failed to save changes', 'Please try again.')
-      }
-    }
+    const saved = await handleSaveDocument()
+    if (saved) setIsEditing(false)
   }
   
   const cancelEditing = () => {
@@ -3812,6 +3849,10 @@ export function DocumentDetailsView({ documentId }: DocumentDetailsViewProps) {
                         selectedSection?.id === section.id && "bg-secondary font-medium"
                       )}
                       onClick={() => {
+                        if (hasUnsavedChanges && selectedSection?.id !== section.id) {
+                          notify.warning('Unsaved changes', 'Save your changes before switching sections.')
+                          return
+                        }
                         setSelectedSection(section)
                         setLastUserSelectedSectionId(section.id)
                         if (isMobile) setLeftSidebarOpen(false)
@@ -3823,7 +3864,15 @@ export function DocumentDetailsView({ documentId }: DocumentDetailsViewProps) {
                 </div>
               </ScrollArea>
               <div className="p-4 border-t bg-background">
-                <Button variant="outline" className="w-full" size="sm">
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  size="sm"
+                  onClick={() => {
+                    setAddSectionError(null)
+                    setIsAddSectionOpen(true)
+                  }}
+                >
                   <FilePlus className="h-4 w-4 mr-2" />
                   Add Section
                 </Button>
@@ -3832,6 +3881,66 @@ export function DocumentDetailsView({ documentId }: DocumentDetailsViewProps) {
             {!isMobile && <PanelResizeHandle className="w-1 bg-border hover:bg-primary/20 transition-colors" />}
           </>
         )}
+
+        <Dialog
+          open={isAddSectionOpen}
+          onOpenChange={(open) => {
+            if (!isAddingSection) {
+              setIsAddSectionOpen(open)
+              if (!open) {
+                setAddSectionError(null)
+                setNewSectionTitle('')
+                setNewSectionContent('')
+              }
+            }
+          }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Add document section</DialogTitle>
+              <DialogDescription>
+                Add a title and content. The section will be saved to this document.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label htmlFor="new-section-title" className="text-sm font-medium">Title</label>
+                <Input
+                  id="new-section-title"
+                  value={newSectionTitle}
+                  onChange={(event) => setNewSectionTitle(event.target.value)}
+                  placeholder="Section title"
+                  disabled={isAddingSection}
+                />
+              </div>
+              <div className="space-y-2">
+                <label htmlFor="new-section-content" className="text-sm font-medium">Content</label>
+                <Textarea
+                  id="new-section-content"
+                  value={newSectionContent}
+                  onChange={(event) => setNewSectionContent(event.target.value)}
+                  placeholder="Section content"
+                  rows={8}
+                  disabled={isAddingSection}
+                />
+              </div>
+              {addSectionError && <p className="text-sm text-destructive">{addSectionError}</p>}
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsAddSectionOpen(false)}
+                disabled={isAddingSection}
+              >
+                Cancel
+              </Button>
+              <Button type="button" onClick={handleCreateSection} disabled={isAddingSection}>
+                {isAddingSection ? 'Saving...' : 'Save section'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Main Content Area */}
         <Panel defaultSize={55} minSize={35} className="flex flex-col min-w-0">
@@ -4014,8 +4123,13 @@ export function DocumentDetailsView({ documentId }: DocumentDetailsViewProps) {
                             title="Save Changes"
                           >
                             <Save className="h-4 w-4 mr-1" />
-                            {savingFields.has('all') ? 'Saving...' : 'Save'}
+                            {savingFields.has('all') ? 'Saving...' : saveStatus === 'saved' ? 'Saved' : saveStatus === 'failed' ? 'Save failed' : 'Save'}
                           </Button>
+                          {saveStatus === 'failed' && saveError && (
+                            <span className="text-sm text-destructive max-w-xs truncate" role="alert" title={saveError}>
+                              {saveError}
+                            </span>
+                          )}
                           <Button
                             variant="outline"
                             size="sm"
@@ -4547,6 +4661,8 @@ export function DocumentDetailsView({ documentId }: DocumentDetailsViewProps) {
                     onChange={(content) => {
                       console.log('📝 Stable Editor content changed:', content)
                       setEditorContent(content)
+                      setSaveStatus('idle')
+                      setSaveError(null)
                       const stats = getEditorTextStats(content)
                       setCharacterCount(stats.characterCount)
                       setWordCount(stats.wordCount)

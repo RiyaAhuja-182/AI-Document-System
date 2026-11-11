@@ -189,8 +189,8 @@ export async function GET(request: NextRequest) {
         securityClassification: doc.securityClassification,
         workflowStatus: doc.workflowStatus,
         tags: doc.tags || [],
-        setAsideType: doc.setAsideType,
-        naicsCodes: doc.naicsCodes || [],
+        setAsideType: analysis.metadata?.setAsideType,
+        naicsCodes: analysis.metadata?.naicsCodes || [],
         isEditable: doc.isEditable,
         
         // Extracted content
@@ -221,7 +221,6 @@ export async function GET(request: NextRequest) {
         // Relations
         uploadedBy: doc.uploadedBy,
         folder: doc.folder,
-        opportunity: doc.opportunity,
         
         // Legacy compatibility (construct from JSON fields)
         aiData: {

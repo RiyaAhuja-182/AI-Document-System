@@ -1,8 +1,5 @@
 import { NextRequest } from 'next/server';
 import { streamText } from 'ai';
-import { openai } from '@ai-sdk/openai';
-import { anthropic } from '@ai-sdk/anthropic';
-import { google } from '@ai-sdk/google';
 import { getAuth } from '@clerk/nextjs/server';
 import { AIServiceManager } from '@/lib/ai/ai-service-manager';
 import { z } from 'zod';
@@ -18,7 +15,8 @@ import {
 import { UsageTrackingService, UsageType } from '@/lib/usage-tracking';
 import { db } from '@/lib/db';
 import { createAIProviderUnavailableResponse } from '../ai-error-response';
-import { ai as aiConfig } from '@/lib/config/env';
+import { ai as aiConfig, FREE_AI_MODEL } from '@/lib/config/env';
+import { canAttemptOpenRouterRequest } from '@/lib/ai/openrouter-request-eligibility';
 
 // Request validation schema
 const enhancedChatSchema = z.object({
@@ -67,11 +65,11 @@ const enhancedChatSchema = z.object({
   })).min(1)
     .describe("Array of conversation messages forming the chat history. Must contain at least one message. The AI uses this complete context to generate relevant responses for government contracting discussions."),
   
-  model: z.string().default('nvidia/nemotron-3-super-120b-a12b:free')
-    .describe("AI model identifier to use for chat completion. Default 'nvidia/nemotron-3-super-120b-a12b:free'. Use 'auto' for the configured default."),
+  model: z.string().default(FREE_AI_MODEL)
+    .describe(`AI model identifier to use for chat completion. Default '${FREE_AI_MODEL}'.`),
   
   provider: z.string().optional()
-    .describe("AI provider to use for the request. Options include 'openai', 'anthropic', 'google'. Use 'auto' for automatic provider selection based on the task requirements."),
+    .describe("Legacy provider field; requests are pinned to the free OpenRouter model."),
   
   useVercelOptimized: z.boolean().optional().default(false)
     .describe("Enable Vercel AI SDK optimization for enhanced streaming performance and modern AI features. When true, uses Vercel's optimized providers instead of the traditional multi-provider system."),
@@ -227,7 +225,9 @@ function handleAIServiceError(error: Error): Response {
           success: false,
           error: 'AI service quota exceeded',
           code: 'QUOTA_EXCEEDED',
-          message: error.provider === 'anthropic' 
+          message: error.provider === 'openrouter'
+            ? 'The free OpenRouter model is at capacity. Wait a little and try again.'
+            : error.provider === 'anthropic'
             ? 'Your Anthropic credit balance is too low. Please visit the Anthropic Console to add credits to your account.'
             : 'Service quota has been exceeded. Please try again later or upgrade your plan.',
           details: {
@@ -266,7 +266,9 @@ function handleAIServiceError(error: Error): Response {
           success: false,
           error: 'AI service unavailable',
           code: 'PROVIDER_UNAVAILABLE',
-          message: `${error.provider} service is currently unavailable. Trying alternative providers...`,
+          message: error.provider === 'openrouter'
+            ? 'The configured free OpenRouter model is unavailable. Please retry later or update the free model configuration.'
+            : `${error.provider} service is currently unavailable.`,
           details: {
             provider: error.provider
           }
@@ -480,7 +482,11 @@ async function handleExistingSystem(
   try {
     // Try to use real AI providers first
     const availableProviders = aiService.getAvailableProviders();
-    const hasRealProvider = availableProviders.some((p: string) => p !== 'mock-demo');
+    // The adapter registry can be empty when its startup health check fails.
+    // A configured OpenRouter key still allows the direct OpenRouter request
+    // path below to work, so do not reject the request based only on registry state.
+    const hasOpenRouterKey = Boolean(requestOpenRouterApiKey || aiConfig.openrouterApiKey);
+    const hasRealProvider = canAttemptOpenRouterRequest(availableProviders, hasOpenRouterKey);
 
     if (hasRealProvider) {
       // Use real AI service with enhanced request
@@ -488,14 +494,8 @@ async function handleExistingSystem(
         if (stream) {
           // Use streaming with real provider
 
-          // CRITICAL: Append :online suffix if web search is enabled
-          let streamModelToUse = request.model;
-          const webSearchEnabled = request.options?.webSearch?.enabled;
-
-          if (webSearchEnabled && !streamModelToUse.includes(':online')) {
-            streamModelToUse = `${streamModelToUse}:online`;
-            console.log(`🌐 Web search enabled (streaming): ${request.model} → ${streamModelToUse}`);
-          }
+          // Keep the free model unchanged; paid :online variants are not used.
+          const streamModelToUse = request.model;
 
           const streamRequest = {
             messages: request.messages.map((msg: any) => {
@@ -590,14 +590,9 @@ async function handleExistingSystem(
 
           console.log('🚀 Sending completion request to AI service:', completionRequest);
 
-          // CRITICAL: Append :online suffix if web search is enabled
-          let modelToUse = completionRequest.model;
-          const webSearchEnabled = completionRequest.options?.webSearch?.enabled;
+          const modelToUse = completionRequest.model;
 
-          if (webSearchEnabled && !modelToUse.includes(':online')) {
-            modelToUse = `${modelToUse}:online`;
-            console.log(`🌐 Web search enabled: ${completionRequest.model} → ${modelToUse}`);
-          }
+          // Keep the free model unchanged; paid :online variants are not used.
 
           // Update the request with the modified model
           const enhancedCompletionRequest = {
@@ -650,23 +645,18 @@ async function handleExistingSystem(
               msg.attachments?.some((att: any) => att.type === 'file')
             );
             const hasAnyAttachments = hasImages || hasPDFs || hasFiles;
-            const webSearchEnabled = request.options?.webSearch?.enabled === true;
             
             // Use appropriate model based on content - ensure capable models for file processing
             let modelToUse = request.model;
             if (hasAnyAttachments) {
               // For multimodal content (images, PDFs, files), ensure we use a capable model
-              let baseModel = modelToUse.replace(':online', ''); // Remove :online temporarily
+              const baseModel = modelToUse.replace(':online', ''); // Remove :online temporarily
               
               // Keep the free router intact. It selects a compatible free
               // model for supported attachment capabilities.
               
-              // Add the OpenRouter online modifier only when web search was
-              // explicitly requested. Appending it to every request can make
-              // otherwise valid text requests fail at the provider.
-              modelToUse = webSearchEnabled ? `${baseModel}:online` : baseModel;
-            } else if (webSearchEnabled && !modelToUse.includes(':online')) {
-              modelToUse = `${modelToUse}:online`;
+              // Preserve the free model and avoid paid online variants.
+              modelToUse = baseModel;
             }
             
             console.log(`🎯 Model selection: ${request.model} → ${modelToUse} (hasImages: ${hasImages}, hasPDFs: ${hasPDFs}, hasFiles: ${hasFiles})`);
@@ -752,6 +742,7 @@ async function handleExistingSystem(
               }),
               temperature,
               max_tokens: maxTokens,
+              reasoning: { enabled: false },
               // Add PDF processing plugin configuration if PDFs are present
               ...(hasPDFs && {
                 plugins: [
@@ -786,20 +777,37 @@ async function handleExistingSystem(
             });
             
             if (!apiResponse.ok) {
-              const errorText = await apiResponse.text();
+              await apiResponse.text();
               console.error('❌ OpenRouter API error:', {
                 status: apiResponse.status,
                 statusText: apiResponse.statusText,
-                error: errorText,
                 model: openrouterRequest.model,
                 hasImages: openrouterRequest.messages.some((m: any) => Array.isArray(m.content) && m.content.some((c: any) => c.type === 'image_url'))
               });
-              throw new Error(`OpenRouter API error: ${apiResponse.status} - ${errorText}`);
+              if (apiResponse.status === 401 || apiResponse.status === 403) {
+                throw new AuthenticationError('OpenRouter rejected the API key', 'openrouter');
+              }
+              if (apiResponse.status === 429) {
+                throw new RateLimitError('openrouter');
+              }
+              if (apiResponse.status === 404) {
+                throw new ProviderUnavailableError('openrouter', 'the configured model was not found (HTTP 404)');
+              }
+              if (apiResponse.status >= 500) {
+                throw new ProviderUnavailableError('openrouter', `HTTP ${apiResponse.status}`);
+              }
+              throw new ValidationError(`OpenRouter rejected the request (HTTP ${apiResponse.status})`, {
+                provider: 'openrouter'
+              });
             }
             
             const data = await apiResponse.json();
+            const content = data.choices?.[0]?.message?.content;
+            if (typeof content !== 'string' || !content.trim()) {
+              throw new ProviderUnavailableError('openrouter', 'The free model returned an empty response');
+            }
             response = {
-              content: data.choices[0]?.message?.content || 'No response content',
+              content,
               model: data.model,
               usage: {
                 promptTokens: data.usage?.prompt_tokens || 0,
@@ -819,8 +827,6 @@ async function handleExistingSystem(
             hasContent: !!response.content,
             hasCitations: !!(response.citations || response.metadata?.citations),
             citationsCount: (response.citations || response.metadata?.citations || []).length,
-            citations: response.citations || response.metadata?.citations || [],
-            annotations: response.annotations || response.metadata?.annotations || []
           });
 
           // Track usage for successful request
@@ -867,86 +873,14 @@ async function handleExistingSystem(
             console.log('Detected error pattern, creating appropriate error response');
             
             if (errorMessage.includes('quota') || errorMessage.includes('credit balance')) {
-              console.log('Anthropic quota exceeded, attempting fallback to OpenAI...');
-              
-              // Try fallback to OpenAI
-              try {
-                const fallbackRequest = {
-                  messages: request.messages.map((msg: any) => {
-                    // Convert message to OpenRouter format with attachments
-                    const baseMessage = {
-                      role: msg.role,
-                      content: msg.content
-                    };
-                    
-                    // Add attachments if present
-                    if (msg.attachments && msg.attachments.length > 0) {
-                      return {
-                        ...baseMessage,
-                        attachments: msg.attachments.map((attachment: any) => ({
-                          type: attachment.type,
-                          data: attachment.data,
-                          path: attachment.url,
-                          mimeType: attachment.mimeType,
-                          detail: attachment.detail || 'auto',
-                          pdfEngine: attachment.pdfEngine || 'pdf-text',
-                          annotations: attachment.annotations
-                        }))
-                      };
-                    }
-                    
-                    return baseMessage;
-                  }),
-                  model: aiConfig.defaultModel,
-                  temperature,
-                  maxTokens,
-                  hints: {
-                    taskType: 'simple_qa' as const,
-                    complexity: 'medium' as const
-                  },
-                  metadata: {
-                    provider: 'openai',
-                    originalModel: aiConfig.defaultModel,
-                    fallbackFrom: 'anthropic'
-                  }
-                };
-
-                const fallbackResponse = await aiService.generateCompletion(fallbackRequest);
-                
-                // Track usage for successful fallback request
-                await trackUsageForRequest(organizationId, request.messages, fallbackResponse);
-
-                return Response.json({
-                  success: true,
-                  content: fallbackResponse.content,
-                  model: fallbackResponse.model,
-                  usage: fallbackResponse.usage,
-                  // Include citations at top level for easy access
-                  citations: fallbackResponse.citations || [],
-                  annotations: fallbackResponse.annotations || [],
-                  metadata: {
-                    ...fallbackResponse.metadata,
-                    provider: 'openai',
-                    model: fallbackResponse.model,
-                    actualModel: fallbackResponse.model,
-                    system: 'enhanced-ai',
-                    timestamp: Date.now(),
-                    fallbackFrom: 'anthropic',
-                    fallbackReason: 'quota exceeded',
-                    citations: fallbackResponse.citations || [],
-                    annotations: fallbackResponse.annotations || []
-                  }
-                });
-              } catch (fallbackError) {
-                console.error('Fallback to OpenAI also failed:', fallbackError);
-                return handleAIServiceError(new QuotaExceededError('anthropic', 'credit balance'));
-              }
+              console.error('Free OpenRouter model is unavailable or rate limited; no paid provider fallback will be attempted.');
+              return handleAIServiceError(new QuotaExceededError('openrouter', 'free model unavailable'));
             }
             if (errorMessage.includes('rate limit')) {
-              return handleAIServiceError(new RateLimitError('anthropic'));
+              return handleAIServiceError(new RateLimitError('openrouter'));
             }
             if (errorMessage.includes('authentication')) {
-              return handleAIServiceError(new AuthenticationError('Invalid API key', 'anthropic'));
+              return handleAIServiceError(new AuthenticationError('Invalid API key', 'openrouter'));
             }
           }
         }
@@ -1039,8 +973,18 @@ export async function POST(req: NextRequest) {
     // Initialize Intent Router if enabled
     const enableIntentRouting = process.env.ENABLE_INTENT_ROUTING === 'true';
     const intentRoutingResult: any = null;
-    const finalModel = model === 'auto' ? aiConfig.defaultModel : model;
-    const selectedProvider = provider || 'openrouter';
+    // Keep the assistant on the configured free OpenRouter model regardless
+    // of client state or legacy provider/model selections.
+    const finalModel = FREE_AI_MODEL;
+    const selectedProvider = 'openrouter';
+
+    if (!requestOpenRouterApiKey && !aiConfig.openrouterApiKey) {
+      return Response.json({
+        success: false,
+        error: 'AI service not configured',
+        message: 'Configure OPENROUTER_API_KEY to use the free OpenRouter model.'
+      }, { status: 503 });
+    }
     
     if (!enableIntentRouting) {
       console.log('🔌 Intent routing disabled');
@@ -1072,7 +1016,7 @@ export async function POST(req: NextRequest) {
     // The Vercel provider adapters are not configured with OpenRouter's
     // server-side base URL. Keep free-router requests on the existing
     // OpenRouter path even if this legacy flag is sent.
-    if (useVercelOptimized && !finalModel.startsWith('openrouter/')) {
+    if (useVercelOptimized && finalModel !== FREE_AI_MODEL) {
       // Use Vercel AI SDK directly for rapid development and streaming
       const vercelAdapter = aiService.getVercelOptimizedService();
       
@@ -1086,7 +1030,7 @@ export async function POST(req: NextRequest) {
         // Stream response using Vercel AI SDK
         try {
           const result = await streamText({
-            model: getVercelModel(model),
+            model: getVercelModel(),
             messages: messages.map(msg => {
               const baseMessage = {
                 role: msg.role,
@@ -1227,23 +1171,9 @@ export async function POST(req: NextRequest) {
   }
 }
 
-/**
- * Helper function to get Vercel AI SDK model instance
- */
-function getVercelModel(modelName: string) {
-  // Map common model names to appropriate providers
-  if (modelName.startsWith('gpt-')) {
-    return openai(modelName);
-  }
-  if (modelName.startsWith('claude-')) {
-    return anthropic(modelName);
-  }
-  if (modelName.startsWith('gemini-')) {
-    return google(modelName);
-  }
-  
-  // Default fallback
-  return openai(aiConfig.defaultModel);
+/** Legacy Vercel SDK path is disabled for the free-only assistant flow. */
+function getVercelModel(): never {
+  throw new Error('Vercel provider routing is disabled; use the configured free OpenRouter model.');
 }
 
 /**

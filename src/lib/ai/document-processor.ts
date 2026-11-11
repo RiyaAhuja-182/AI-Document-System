@@ -69,6 +69,9 @@ export class DocumentProcessor {
         data: { 
           processing: {
             status: 'PROCESSING',
+            currentStatus: 'PROCESSING',
+            progress: 0,
+            currentStep: 'Starting document processing',
             startedAt: new Date(),
             completedAt: null,
             error: null
@@ -248,6 +251,9 @@ export class DocumentProcessor {
         data: { 
           processing: {
             status: 'PROCESSING',
+            currentStatus: 'PROCESSING',
+            progress: 0,
+            currentStep: 'Starting document processing',
             startedAt: new Date(),
             completedAt: null,
             error: null
@@ -1314,6 +1320,15 @@ export class DocumentProcessor {
       estimatedCompletion: null,
       events: processingEvents
     }
+    const currentDocument = await prisma.document.findUnique({
+      where: { id: documentId },
+      select: { content: true, analysis: true }
+    })
+    const currentContent = (currentDocument?.content as any) || {}
+    const currentSections = Array.isArray(currentContent.sections) ? currentContent.sections : []
+    const userEditedSections = currentSections.filter((section: any) => section?.editorSource === 'user')
+    const sectionsToPersist = userEditedSections.length > 0 ? userEditedSections : convertedSections
+    const existingAnalysis = (currentDocument?.analysis as any) || {}
 
     console.log(`🔍 [UPDATE DOCUMENT] Converting ${aiData.processingHistory?.length || 0} processing history items to ${processingEvents.length} events`);
 
@@ -1325,6 +1340,7 @@ export class DocumentProcessor {
           // Split aiData into correct JSON fields with proper structure
           processing: processingData,
           content: {
+            ...currentContent,
             extractedText: aiData.content.extractedText,
             summary: aiData.content.summary,
             keywords: aiData.content.keywords,
@@ -1332,11 +1348,19 @@ export class DocumentProcessor {
             actionItems: aiData.content.actionItems,
             questions: aiData.content.questions,
             // Convert sections to the expected format
-            sections: convertedSections,
+            sections: sectionsToPersist,
             tables: aiData.structure?.tables || [],
             images: aiData.structure?.images || []
           },
-          analysis: aiData.analysis,
+          analysis: {
+            ...existingAnalysis,
+            ...aiData.analysis,
+            metadata: {
+              ...(existingAnalysis.metadata || {}),
+              ...(metadata?.setAsideType !== undefined ? { setAsideType: metadata.setAsideType } : {}),
+              ...(metadata?.naicsCodes !== undefined ? { naicsCodes: metadata.naicsCodes } : {}),
+            }
+          },
           entities: {
             entities: aiData.analysis?.entities || [],
             extractedAt: new Date().toISOString(),
@@ -1349,8 +1373,6 @@ export class DocumentProcessor {
           // Update metadata fields if they exist in the AI analysis
           ...(metadata?.documentType && { documentType: metadata.documentType }),
           ...(metadata?.securityClassification && { securityClassification: metadata.securityClassification }),
-          ...(metadata?.setAsideType && { setAsideType: metadata.setAsideType }),
-          ...(metadata?.naicsCodes && { naicsCodes: metadata.naicsCodes }),
           ...(metadata?.tags && { tags: metadata.tags }),
           ...(metadata?.description && { description: metadata.description })
         }
@@ -1368,9 +1390,18 @@ export class DocumentProcessor {
     status: ProcessingStatus, 
     error?: string
   ): Promise<void> {
+    const currentDocument = await prisma.document.findUnique({
+      where: { id: documentId },
+      select: { processing: true }
+    })
+    const currentProcessing = (currentDocument?.processing as any) || {}
     const processingData: any = {
+      ...currentProcessing,
       status,
-      startedAt: new Date(),
+      currentStatus: status,
+      progress: status === 'COMPLETED' ? 100 : status === 'FAILED' ? 0 : (currentProcessing.progress || 0),
+      currentStep: status === 'COMPLETED' || status === 'FAILED' ? null : currentProcessing.currentStep,
+      startedAt: currentProcessing.startedAt || new Date().toISOString(),
       completedAt: status === 'COMPLETED' || status === 'FAILED' ? new Date() : null,
       error: error || null
     }
@@ -1521,7 +1552,11 @@ export class DocumentProcessor {
         data: { 
           // Split aiData into correct JSON fields
           processing: {
+            ...((document?.processing as any) || {}),
             status: 'PROCESSING',
+            currentStatus: 'PROCESSING',
+            progress,
+            currentStep: step,
             startedAt: new Date(),
             completedAt: null,
             error: null,
@@ -2124,6 +2159,15 @@ Return JSON format:
         analyzedAt: new Date().toISOString()
       } : undefined
     }
+    const existingDocument = await prisma.document.findUnique({
+      where: { id: documentId },
+      select: { analysis: true, content: true }
+    })
+    const existingAnalysis = (existingDocument?.analysis as any) || {}
+    const existingContent = (existingDocument?.content as any) || {}
+    const existingUserSections = Array.isArray(existingContent.sections)
+      ? existingContent.sections.filter((section: any) => section?.editorSource === 'user')
+      : []
 
     await prisma.$transaction(async (tx) => {
       // Update main document with comprehensive AI data
@@ -2140,12 +2184,10 @@ Return JSON format:
           // Document classification and metadata from AI analysis
           documentType: metadata?.documentType || 'OTHER',
           securityClassification: metadata?.securityClassification || 'PUBLIC',
-          setAsideType: metadata?.setAsideType || null,
           description: metadata?.description || aiData.content.summary || null,
           
           // CRITICAL: Tags and NAICS codes from metadata analysis + extracted data for UI accessibility
           tags: metadata?.tags || [],
-          naicsCodes: metadata?.naicsCodes || [],
           
           // Contract fields for easier UI access (in addition to analysis.contractAnalysis)
           // Note: deadline and estimatedValue fields removed - not in Prisma schema
@@ -2160,13 +2202,21 @@ Return JSON format:
             keyPoints: aiData.content.keyPoints,
             actionItems: aiData.content.actionItems,
             questions: aiData.content.questions,
-            sections: convertedSections,
+            sections: existingUserSections.length > 0 ? existingUserSections : convertedSections,
             tables: aiData.structure?.tables || [],
             images: aiData.structure?.images || []
           },
           
           // CRITICAL: Analysis results including contract analysis
-          analysis: analysisData,
+          analysis: {
+            ...existingAnalysis,
+            ...analysisData,
+            metadata: {
+              ...(existingAnalysis.metadata || {}),
+              ...(metadata?.setAsideType !== undefined ? { setAsideType: metadata.setAsideType } : {}),
+              ...(metadata?.naicsCodes !== undefined ? { naicsCodes: metadata.naicsCodes } : {}),
+            }
+          },
           
           // Entity extraction results
           entities: {

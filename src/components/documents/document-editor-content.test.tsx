@@ -35,7 +35,7 @@ describe('scratch document editor', () => {
 
     expect(editor.textContent).toBe('hello world')
     expect(updateEditableSections(undefined, '1', editor.innerHTML)).toEqual({
-      sections: [{ title: 'Document Content', content: editor.innerHTML, pageNumber: 1 }]
+      sections: [{ sectionId: '1', title: 'Document Content', content: editor.innerHTML, pageNumber: 1 }]
     })
     expect(getEditorTextStats(editor.innerHTML)).toEqual({ characterCount: 11, wordCount: 2 })
   })

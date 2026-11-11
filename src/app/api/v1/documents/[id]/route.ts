@@ -13,6 +13,17 @@ import { randomBytes } from 'crypto';
 import { normalizeFilePath } from '@/lib/storage/path-utils';
 import { crudAuditLogger } from '@/lib/audit/crud-audit-logger';
 import { getClientIP } from '@/lib/audit/middleware';
+import DOMPurify from 'isomorphic-dompurify';
+import { z } from 'zod';
+
+const EditableContentSchema = z.object({
+  sections: z.array(z.object({
+    sectionId: z.string().min(1).max(200).optional(),
+    title: z.string().max(500),
+    content: z.string().max(2_000_000),
+    pageNumber: z.number().int().min(1).optional()
+  })).max(100).optional()
+}).passthrough()
 
 /**
  * @swagger
@@ -1049,6 +1060,7 @@ export async function PATCH(
         documentType: true,
         description: true,
         content: true,
+        updatedAt: true,
         entities: true,
         sharing: true,
         processing: true,
@@ -1097,25 +1109,31 @@ export async function PATCH(
     if (body.documentType !== undefined) updateData.documentType = body.documentType
     if (body.description !== undefined) updateData.description = body.description
     if (body.content !== undefined) {
-      console.log('🔧 PATCH - Updating content field:', body.content)
-      updateData.content = body.content
-      const sections = Array.isArray(body.content?.sections) ? body.content.sections : []
-      const sectionText = sections
-        .map((item: { content?: string }) => item.content || '')
-        .join('\n\n')
-        .trim()
-      const extractedText = sectionText || (typeof body.content?.extractedText === 'string' ? body.content.extractedText.trim() : '')
-      updateData.extractedText = extractedText
-      updateData.size = Buffer.byteLength(extractedText, 'utf8')
-      updateData.lastModified = new Date()
-      updateData.processing = {
-        ...(existingDocument.processing as object || {}),
-        currentStatus: extractedText ? 'COMPLETED' : 'DRAFT',
-        progress: extractedText ? 100 : 0,
-        currentStep: null,
-        error: null,
-        ...(extractedText ? { completedAt: new Date().toISOString() } : {}),
+      const contentValidation = EditableContentSchema.safeParse(body.content)
+      if (!contentValidation.success) {
+        return NextResponse.json(
+          { success: false, error: 'Invalid document content', details: contentValidation.error.flatten() },
+          { status: 400 }
+        )
       }
+
+      console.log('🔧 PATCH - Updating content field:', body.content)
+      updateData.content = {
+        ...body.content,
+        editorSource: 'user',
+        editorUpdatedAt: new Date().toISOString(),
+        ...(Array.isArray(body.content.sections)
+          ? {
+              sections: body.content.sections.map((section: any) => ({
+                ...section,
+                content: typeof section.content === 'string'
+                  ? DOMPurify.sanitize(section.content)
+                  : ''
+              }))
+            }
+          : {})
+      }
+      updateData.lastModified = new Date()
     }
     if (body.entities !== undefined) {
       // Handle entities - they'll be updated in the entities table separately
@@ -1127,10 +1145,32 @@ export async function PATCH(
     console.log('🔧 PATCH update data:', updateData)
     
     // Update the document with only the provided fields
-    const updatedDocument = await prisma.document.update({
-      where: { id: documentId },
-      data: updateData
-    })
+    if (body.content !== undefined && body.expectedUpdatedAt !== undefined) {
+      const expectedUpdatedAt = new Date(body.expectedUpdatedAt)
+      if (Number.isNaN(expectedUpdatedAt.getTime())) {
+        return NextResponse.json(
+          { success: false, error: 'Invalid expected document version' },
+          { status: 400 }
+        )
+      }
+
+      const result = await prisma.document.updateMany({
+        where: { id: documentId, updatedAt: expectedUpdatedAt },
+        data: updateData
+      })
+
+      if (result.count !== 1) {
+        return NextResponse.json(
+          { success: false, error: 'Document changed while you were editing. Reload before saving again.' },
+          { status: 409 }
+        )
+      }
+    } else {
+      await prisma.document.update({
+        where: { id: documentId },
+        data: updateData
+      })
+    }
     
     // Handle contract analysis update separately if provided
     if (body.contractAnalysis) {

@@ -2399,7 +2399,7 @@ export const useDocumentChatSystemStore = create<DocumentChatSystemStore>()(
                 // Fallback to minimal set on error
                 const fallbackModels: ModelInfo[] = [
                   {
-                    name: 'nvidia/nemotron-3-super-120b-a12b:free',
+                    name: 'nvidia/nemotron-3.5-lightning:free',
                     provider: 'openrouter',
                     displayName: 'Free Model Router',
                     description: 'Automatically selects an available free model via OpenRouter',

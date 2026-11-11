@@ -321,9 +321,9 @@ export async function PATCH(
       return NextResponse.json({ error: 'Access denied' }, { status: 403 })
     }
 
-    // Check if user has permission to update content
-    // For now, allow document owner and users in same organization with WRITE permission
-    const canUpdate = document.uploadedById === user.id || true // Allow org members
+    // Content edits are restricted to the document owner. Organization membership
+    // alone does not grant write access to another user's document.
+    const canUpdate = document.uploadedById === user.id
 
     if (!canUpdate) {
       return NextResponse.json(

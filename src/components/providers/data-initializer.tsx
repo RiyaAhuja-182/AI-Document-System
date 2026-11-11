@@ -98,8 +98,7 @@ export async function DataInitializer({ children }: DataInitializerProps) {
               workflowStatus: true,
               securityClassification: true,
               tags: true,
-              setAsideType: true,
-              naicsCodes: true,
+              analysis: true,
               organizationId: true
             },
             orderBy: [
@@ -155,8 +154,8 @@ export async function DataInitializer({ children }: DataInitializerProps) {
           workflowStatus: doc.workflowStatus,
           securityClassification: doc.securityClassification,
           tags: doc.tags || [],
-          setAsideType: doc.setAsideType,
-          naicsCodes: doc.naicsCodes || [],
+          setAsideType: (doc.analysis as any)?.metadata?.setAsideType,
+          naicsCodes: (doc.analysis as any)?.metadata?.naicsCodes || [],
           
           // Minimal JSON fields - no complex processing
           processing: { status: 'PENDING', startedAt: null, completedAt: null, error: null },

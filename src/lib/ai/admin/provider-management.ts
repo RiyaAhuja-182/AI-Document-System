@@ -95,9 +95,9 @@ export class ProviderManager {
       displayName: 'OpenRouter',
       enabled: true,
       priority: 10,
-      defaultModel: 'nvidia/nemotron-3-super-120b-a12b:free',
+      defaultModel: 'nvidia/nemotron-3.5-lightning:free',
       availableModels: [
-        'nvidia/nemotron-3-super-120b-a12b:free'
+        'nvidia/nemotron-3.5-lightning:free'
       ],
       features: ['chat', 'completion', 'multi-provider', 'cost-optimization', 'smart-routing'],
       costTier: 'low',

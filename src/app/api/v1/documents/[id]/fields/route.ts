@@ -212,8 +212,7 @@ export async function PATCH(
         uploadedById: true,
         name: true,
         tags: true,
-        setAsideType: true,
-        naicsCodes: true,
+        analysis: true,
         description: true,
         documentType: true,
         securityClassification: true,
@@ -244,6 +243,8 @@ export async function PATCH(
 
     // Prepare update data - only include fields that are provided
     const documentUpdate: any = {}
+    const currentAnalysis = (document.analysis as any) || {}
+    const metadata = { ...(currentAnalysis.metadata || {}) }
     const updatedFields: string[] = []
 
     if (updateData.name !== undefined) {
@@ -257,13 +258,17 @@ export async function PATCH(
     }
     
     if (updateData.setAsideType !== undefined) {
-      documentUpdate.setAsideType = updateData.setAsideType
+      metadata.setAsideType = updateData.setAsideType
       updatedFields.push('setAsideType')
     }
     
     if (updateData.naicsCodes !== undefined) {
-      documentUpdate.naicsCodes = updateData.naicsCodes
+      metadata.naicsCodes = updateData.naicsCodes
       updatedFields.push('naicsCodes')
+    }
+
+    if (updateData.setAsideType !== undefined || updateData.naicsCodes !== undefined) {
+      documentUpdate.analysis = { ...currentAnalysis, metadata }
     }
     
     if (updateData.description !== undefined) {
@@ -321,8 +326,8 @@ export async function PATCH(
       id: updatedDocument.id,
       name: updatedDocument.name,
       tags: updatedDocument.tags || [],
-      setAsideType: updatedDocument.setAsideType,
-      naicsCodes: updatedDocument.naicsCodes || [],
+      setAsideType: (updatedDocument.analysis as any)?.metadata?.setAsideType,
+      naicsCodes: (updatedDocument.analysis as any)?.metadata?.naicsCodes || [],
       description: updatedDocument.description,
       documentType: updatedDocument.documentType,
       securityClassification: updatedDocument.securityClassification,
@@ -330,7 +335,6 @@ export async function PATCH(
       updatedAt: updatedDocument.updatedAt.toISOString(),
       folder: updatedDocument.folder,
       uploadedBy: updatedDocument.uploadedBy,
-      opportunity: updatedDocument.opportunity
     }
 
     return NextResponse.json({

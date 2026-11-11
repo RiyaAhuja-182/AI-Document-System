@@ -171,6 +171,7 @@ describe('SmartOpenRouterAdapter', () => {
       // Parse the request body to verify provider configuration
       const callArgs = mockFetch.mock.calls[0];
       const requestBody = JSON.parse(callArgs[1]?.body as string);
+      expect(requestBody.reasoning).toEqual({ enabled: false });
       
       expect(requestBody.provider).toEqual({
         order: ['anthropic', 'openai'],

@@ -166,3 +166,4 @@ pip-delete-this-directory.txt
 # Local backup and editor workspace files
 *.bak
 *.code-workspace
+.next-dev/

@@ -194,7 +194,7 @@ export class AnalyticsIntegration {
       // Fallback to default routing
       return {
         provider: 'openrouter',
-        model: 'nvidia/nemotron-3-super-120b-a12b:free',
+        model: 'nvidia/nemotron-3.5-lightning:free',
         confidence: 0.5,
         reasoning: 'Fallback due to analytics error',
         fallbackProviders: ['openrouter'],
