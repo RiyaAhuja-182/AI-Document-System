@@ -5,7 +5,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14%2B-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
 [![Prisma](https://img.shields.io/badge/Prisma-6-2D3748?logo=prisma&logoColor=white)](https://www.prisma.io/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
 
 AI Document System is a full-stack document management and document-question-answering application. It combines authenticated, organization-scoped document storage with structured text extraction, document analysis, vector indexing, semantic search, and AI-generated answers.
 
@@ -383,6 +383,3 @@ The document-chat prompt explicitly supplies document content, disallows outside
 
 **GitHub:** [RiyaAhuja-182/AI-Document-System](https://github.com/RiyaAhuja-182/AI-Document-System)
 
-## License
-
-This project is released under the [MIT License](LICENSE).
